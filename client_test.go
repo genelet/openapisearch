@@ -108,6 +108,49 @@ func TestAutoFallsBackToPublicAPIs(t *testing.T) {
 	}
 }
 
+func TestSearchPublicAPIsFindsValidatedSpec(t *testing.T) {
+	var baseURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/entries":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"entries": []map[string]any{{
+					"API":         "Example Mail",
+					"Description": "Send transactional mail",
+					"Link":        baseURL + "/docs",
+					"Category":    "Communication",
+				}},
+			})
+		case "/openapi.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"openapi":"3.0.0","info":{"title":"Example Mail","version":"1.0.0"},"paths":{"/send":{"post":{"responses":{"200":{"description":"ok"}}}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	report, err := (&Client{
+		PublicAPIsURL:    server.URL + "/entries",
+		AllowUnsafeHosts: true,
+	}).Search(context.Background(), SearchOptions{
+		Query:  "mail",
+		Limit:  3,
+		Source: SourcePublicAPIs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("len = %d, want 1: %#v", len(report.Results), report.Results)
+	}
+	got := report.Results[0]
+	if got.Source != string(SourcePublicAPIs) || !got.Validated || got.Title != "Example Mail" || got.SpecURL != server.URL+"/openapi.json" {
+		t.Fatalf("unexpected public-apis result: %#v", got)
+	}
+}
+
 func TestImportValidatesAndWritesUniqueFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`openapi: 3.0.0
