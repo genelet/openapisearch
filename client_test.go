@@ -233,6 +233,27 @@ paths:
 `,
 		},
 		{
+			name: "valid openapi 3.1",
+			body: `{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Mail",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/send": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    }
+  }
+}`,
+		},
+		{
 			name: "valid swagger 2",
 			body: `swagger: "2.0"
 info:
@@ -270,6 +291,20 @@ info:
   title: Mail
   version: 1.0.0
 paths: []
+`,
+			wantErr: true,
+		},
+		{
+			name: "openapi 3 response needs description",
+			body: `openapi: 3.0.0
+info:
+  title: Mail
+  version: 1.0.0
+paths:
+  /send:
+    post:
+      responses:
+        "200": {}
 `,
 			wantErr: true,
 		},

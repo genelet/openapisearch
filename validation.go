@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi2"
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/tabilet/oas/openapi20"
+	"github.com/tabilet/oas/openapi30"
+	"github.com/tabilet/oas/openapi31"
 	"gopkg.in/yaml.v3"
 )
 
 func specMetadata(ctx context.Context, content []byte) (SpecMetadata, bool) {
+	_ = ctx
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 {
 		return SpecMetadata{}, false
@@ -32,36 +34,28 @@ func specMetadata(ctx context.Context, content []byte) (SpecMetadata, bool) {
 	if containsExternalRef(root) {
 		return SpecMetadata{}, false
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	normalized, err := json.Marshal(root)
+	if err != nil {
+		return SpecMetadata{}, false
 	}
 
-	if strings.TrimSpace(openapi) != "" {
-		loader := openapi3.NewLoader()
-		loader.Context = ctx
-		doc, err := loader.LoadFromData(trimmed)
-		if err != nil {
+	openapi = strings.TrimSpace(openapi)
+	if openapi != "" {
+		switch {
+		case strings.HasPrefix(openapi, "3.0"):
+			return specMetadataV30(normalized)
+		case strings.HasPrefix(openapi, "3.1"):
+			return specMetadataV31(normalized)
+		default:
 			return SpecMetadata{}, false
 		}
-		if doc.OpenAPIMajorMinor() == "" || doc.Info == nil || doc.Paths == nil {
-			return SpecMetadata{}, false
-		}
-		if err := doc.Validate(loader.Context); err != nil {
-			return SpecMetadata{}, false
-		}
-		return SpecMetadata{
-			Title:          strings.TrimSpace(doc.Info.Title),
-			Description:    strings.TrimSpace(doc.Info.Description),
-			OpenAPI:        strings.TrimSpace(doc.OpenAPI),
-			OperationCount: operationCountV3(doc.Paths),
-		}, true
 	}
 
 	if !validSwagger2Root(root) {
 		return SpecMetadata{}, false
 	}
-	var doc openapi2.T
-	if err := yaml.Unmarshal(trimmed, &doc); err != nil {
+	var doc openapi20.Swagger
+	if err := json.Unmarshal(normalized, &doc); err != nil {
 		return SpecMetadata{}, false
 	}
 	if strings.TrimSpace(doc.Swagger) != "2.0" || strings.TrimSpace(doc.Info.Title) == "" || strings.TrimSpace(doc.Info.Version) == "" || doc.Paths == nil {
@@ -72,6 +66,38 @@ func specMetadata(ctx context.Context, content []byte) (SpecMetadata, bool) {
 		Description:    strings.TrimSpace(doc.Info.Description),
 		Swagger:        strings.TrimSpace(doc.Swagger),
 		OperationCount: operationCountV2(doc.Paths),
+	}, true
+}
+
+func specMetadataV30(content []byte) (SpecMetadata, bool) {
+	var doc openapi30.OpenAPI
+	if err := json.Unmarshal(content, &doc); err != nil {
+		return SpecMetadata{}, false
+	}
+	if result := doc.Validate(); !result.Valid() {
+		return SpecMetadata{}, false
+	}
+	return SpecMetadata{
+		Title:          strings.TrimSpace(doc.Info.Title),
+		Description:    strings.TrimSpace(doc.Info.Description),
+		OpenAPI:        strings.TrimSpace(doc.OpenAPI),
+		OperationCount: operationCountV30(doc.Paths),
+	}, true
+}
+
+func specMetadataV31(content []byte) (SpecMetadata, bool) {
+	var doc openapi31.OpenAPI
+	if err := json.Unmarshal(content, &doc); err != nil {
+		return SpecMetadata{}, false
+	}
+	if result := doc.Validate(); !result.Valid() {
+		return SpecMetadata{}, false
+	}
+	return SpecMetadata{
+		Title:          strings.TrimSpace(doc.Info.Title),
+		Description:    strings.TrimSpace(doc.Info.Description),
+		OpenAPI:        strings.TrimSpace(doc.OpenAPI),
+		OperationCount: operationCountV31(doc.Paths),
 	}, true
 }
 
@@ -185,24 +211,110 @@ func isHTTPMethod(method string) bool {
 	}
 }
 
-func operationCountV3(paths *openapi3.Paths) int {
+func operationCountV30(paths *openapi30.Paths) int {
 	count := 0
-	for _, path := range paths.Map() {
+	if paths == nil {
+		return count
+	}
+	for _, path := range paths.Paths {
 		if path == nil {
 			continue
 		}
-		count += len(path.Operations())
+		if path.Get != nil {
+			count++
+		}
+		if path.Put != nil {
+			count++
+		}
+		if path.Post != nil {
+			count++
+		}
+		if path.Delete != nil {
+			count++
+		}
+		if path.Options != nil {
+			count++
+		}
+		if path.Head != nil {
+			count++
+		}
+		if path.Patch != nil {
+			count++
+		}
+		if path.Trace != nil {
+			count++
+		}
 	}
 	return count
 }
 
-func operationCountV2(paths map[string]*openapi2.PathItem) int {
+func operationCountV31(paths *openapi31.Paths) int {
 	count := 0
-	for _, path := range paths {
+	if paths == nil {
+		return count
+	}
+	for _, path := range paths.Paths {
 		if path == nil {
 			continue
 		}
-		count += len(path.Operations())
+		if path.Get != nil {
+			count++
+		}
+		if path.Put != nil {
+			count++
+		}
+		if path.Post != nil {
+			count++
+		}
+		if path.Delete != nil {
+			count++
+		}
+		if path.Options != nil {
+			count++
+		}
+		if path.Head != nil {
+			count++
+		}
+		if path.Patch != nil {
+			count++
+		}
+		if path.Trace != nil {
+			count++
+		}
+	}
+	return count
+}
+
+func operationCountV2(paths *openapi20.Paths) int {
+	count := 0
+	if paths == nil {
+		return count
+	}
+	for _, path := range paths.Paths {
+		if path == nil {
+			continue
+		}
+		if path.Get != nil {
+			count++
+		}
+		if path.Put != nil {
+			count++
+		}
+		if path.Post != nil {
+			count++
+		}
+		if path.Delete != nil {
+			count++
+		}
+		if path.Options != nil {
+			count++
+		}
+		if path.Head != nil {
+			count++
+		}
+		if path.Patch != nil {
+			count++
+		}
 	}
 	return count
 }
