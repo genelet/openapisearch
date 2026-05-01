@@ -279,12 +279,18 @@ func (leaf LeafAdapter) BindingAudit() BindingAudit {
 // CredentialValueDiagnostics flags likely literal credential values in artifact
 // content without resolving or testing credentials.
 func (leaf LeafAdapter) CredentialValueDiagnostics() []Diagnostic {
+	return ScanCredentialValues(leaf.ArtifactSet.Artifacts)
+}
+
+// ScanCredentialValues flags likely literal credential values in artifact
+// content without resolving or testing credentials.
+func ScanCredentialValues(artifacts []Artifact) []Diagnostic {
 	var diagnostics []Diagnostic
-	for _, artifact := range leaf.ArtifactSet.Artifacts {
+	for _, artifact := range artifacts {
 		if len(artifact.Content) == 0 {
 			continue
 		}
-		if containsLikelyCredentialValue(artifact.Content) {
+		if ContainsLikelyCredentialValue(artifact.Content) {
 			diagnostics = append(diagnostics, Diagnostic{
 				Severity:    "error",
 				Code:        "leaf.literal_credential",
@@ -570,12 +576,15 @@ var (
 		regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`),
 	}
 	jwtValuePattern              = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
-	sensitiveAssignmentRegexp    = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|token|secret|password|authorization|credential)[A-Za-z0-9_.-]*)\s*[:=]\s*["']([^"'\r\n]+)["']`)
+	sensitiveAssignmentRegexp    = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|app[_-]?id|appid|token|secret|password|authorization|credential)[A-Za-z0-9_.-]*)\s*[:=]\s*["']([^"'\r\n]+)["']`)
 	bearerCredentialRegexp       = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/-]{16,}`)
 	tokenShapedCredentialPattern = regexp.MustCompile(`^[A-Za-z0-9_+/=-]+$`)
+	tokenSourceAssignmentSuffix  = regexp.MustCompile(`(?i)(?:^|[_\-.])from$`)
 )
 
-func containsLikelyCredentialValue(data []byte) bool {
+// ContainsLikelyCredentialValue reports whether data contains a likely concrete
+// credential value. Symbolic workflow references and binding names are allowed.
+func ContainsLikelyCredentialValue(data []byte) bool {
 	for _, pattern := range providerCredentialPatterns {
 		if pattern.Match(data) {
 			return true
@@ -593,11 +602,19 @@ func containsLikelyCredentialValue(data []byte) bool {
 		if len(match) < 3 {
 			continue
 		}
+		if isSensitiveSourceAssignment(string(match[1])) {
+			continue
+		}
 		if isLikelySecretLiteral(string(match[2])) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSensitiveSourceAssignment(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return normalized == "token_from" || tokenSourceAssignmentSuffix.MatchString(normalized)
 }
 
 func isLikelySecretLiteral(value string) bool {
