@@ -81,11 +81,13 @@ type ParameterSummary struct {
 
 // RequestBodySummary describes a request body without examples or defaults.
 type RequestBodySummary struct {
-	Description  string         `json:"description,omitempty"`
-	Required     bool           `json:"required,omitempty"`
-	ContentTypes []string       `json:"content_types,omitempty"`
-	Schema       *SchemaSummary `json:"schema,omitempty"`
-	Ref          string         `json:"ref,omitempty"`
+	Description        string                `json:"description,omitempty"`
+	Required           bool                  `json:"required,omitempty"`
+	ContentTypes       []string              `json:"content_types,omitempty"`
+	Schema             *SchemaSummary        `json:"schema,omitempty"`
+	Ref                string                `json:"ref,omitempty"`
+	Fields             []RequestFieldSummary `json:"fields,omitempty"`
+	RequiredFieldPaths []string              `json:"required_field_paths,omitempty"`
 }
 
 // SchemaSummary is a shallow, prompt-safe schema description.
@@ -106,6 +108,17 @@ type PropertySummary struct {
 	Ref         string `json:"ref,omitempty"`
 	Description string `json:"description,omitempty"`
 	Required    bool   `json:"required,omitempty"`
+}
+
+// RequestFieldSummary is a recursive prompt-safe request body field summary. It
+// intentionally omits defaults, examples, and secret-like field names.
+type RequestFieldSummary struct {
+	Path        string `json:"path"`
+	Required    bool   `json:"required,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Format      string `json:"format,omitempty"`
+	Ref         string `json:"ref,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // SecuritySummary describes an operation security requirement by symbolic name.
@@ -363,8 +376,14 @@ func requestBodySummary(operation map[string]any, op *OperationSummary) *Request
 		summary.ContentTypes = sortedMapKeys(content)
 		if len(summary.ContentTypes) > 0 {
 			media := mapValue(content[summary.ContentTypes[0]])
-			schema := schemaSummary(mapValue(media["schema"]))
+			rawSchema := mapValue(media["schema"])
+			schema := schemaSummary(rawSchema)
 			summary.Schema = &schema
+			summary.Fields = requestFieldSummaries(rawSchema, "", summary.Required, 0)
+			if len(summary.Fields) == 0 && len(rawSchema) > 0 && !secretLikeFieldName("body") {
+				summary.Fields = []RequestFieldSummary{requestFieldSummary("body", summary.Required, rawSchema)}
+			}
+			summary.RequiredFieldPaths = requiredRequestFieldPaths(summary.Fields)
 			if schema.Ref != "" {
 				addOperationIssue(op, "schema.ref_unresolved", "request body schema reference was not resolved", schema.Ref)
 			}
@@ -376,15 +395,22 @@ func requestBodySummary(operation map[string]any, op *OperationSummary) *Request
 		if stringValue(parameter["in"]) != "body" {
 			continue
 		}
-		schema := schemaSummary(mapValue(parameter["schema"]))
+		rawSchema := mapValue(parameter["schema"])
+		schema := schemaSummary(rawSchema)
 		if schema.Ref != "" {
 			addOperationIssue(op, "schema.ref_unresolved", "body parameter schema reference was not resolved", schema.Ref)
 		}
+		fields := requestFieldSummaries(rawSchema, "", boolValue(parameter["required"]), 0)
+		if len(fields) == 0 && len(rawSchema) > 0 && !secretLikeFieldName("body") {
+			fields = []RequestFieldSummary{requestFieldSummary("body", boolValue(parameter["required"]), rawSchema)}
+		}
 		return &RequestBodySummary{
-			Description: stringValue(parameter["description"]),
-			Required:    boolValue(parameter["required"]),
-			Schema:      &schema,
-			Ref:         stringValue(parameter["$ref"]),
+			Description:        stringValue(parameter["description"]),
+			Required:           boolValue(parameter["required"]),
+			Schema:             &schema,
+			Ref:                stringValue(parameter["$ref"]),
+			Fields:             fields,
+			RequiredFieldPaths: requiredRequestFieldPaths(fields),
 		}
 	}
 	return nil
@@ -565,4 +591,103 @@ func schemaType(value any) string {
 		return ""
 	}
 	return strings.Join(values, "|")
+}
+
+const (
+	maxRequestFieldDepth = 6
+	maxRequestFields     = 60
+)
+
+func requestFieldSummaries(schema map[string]any, path string, required bool, depth int) []RequestFieldSummary {
+	var out []RequestFieldSummary
+	collectRequestFields(schema, path, required, depth, &out)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Path < out[j].Path
+	})
+	if len(out) > maxRequestFields {
+		out = out[:maxRequestFields]
+	}
+	return out
+}
+
+func collectRequestFields(schema map[string]any, path string, required bool, depth int, out *[]RequestFieldSummary) {
+	if len(*out) >= maxRequestFields || depth > maxRequestFieldDepth {
+		return
+	}
+	if len(schema) == 0 {
+		if path != "" && !secretLikeFieldName(path) {
+			*out = append(*out, RequestFieldSummary{Path: path, Required: required})
+		}
+		return
+	}
+	if path != "" && !secretLikeFieldName(path) {
+		*out = append(*out, requestFieldSummary(path, required, schema))
+		if len(*out) >= maxRequestFields || depth == maxRequestFieldDepth {
+			return
+		}
+	}
+	properties := mapValue(schema["properties"])
+	if len(properties) > 0 {
+		requiredSet := make(map[string]bool)
+		for _, name := range stringSlice(schema["required"]) {
+			requiredSet[name] = true
+		}
+		for _, name := range sortedMapKeys(properties) {
+			childPath := name
+			if path != "" {
+				childPath = path + "." + name
+			}
+			collectRequestFields(mapValue(properties[name]), childPath, required && requiredSet[name], depth+1, out)
+			if len(*out) >= maxRequestFields {
+				return
+			}
+		}
+		return
+	}
+	if items := mapValue(schema["items"]); len(items) > 0 {
+		itemPath := "body[]"
+		if path != "" {
+			itemPath = path + "[]"
+		}
+		collectRequestFields(items, itemPath, required, depth+1, out)
+	}
+}
+
+func requestFieldSummary(path string, required bool, schema map[string]any) RequestFieldSummary {
+	return RequestFieldSummary{
+		Path:        path,
+		Required:    required,
+		Type:        schemaType(schema["type"]),
+		Format:      stringValue(schema["format"]),
+		Ref:         stringValue(schema["$ref"]),
+		Description: stringValue(schema["description"]),
+	}
+}
+
+func requiredRequestFieldPaths(fields []RequestFieldSummary) []string {
+	var out []string
+	for _, field := range fields {
+		if field.Required {
+			out = append(out, field.Path)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func secretLikeFieldName(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "api_key") || strings.Contains(lower, "apikey") || strings.Contains(lower, "api-key") {
+		return true
+	}
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		return r == '.' || r == '_' || r == '-' || r == '[' || r == ']'
+	})
+	for _, part := range parts {
+		switch part {
+		case "secret", "password", "passwd", "pwd", "token", "key", "authorization", "auth", "credential", "credentials":
+			return true
+		}
+	}
+	return false
 }

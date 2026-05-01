@@ -123,6 +123,43 @@ func TestBuildOperationInventoryReportsMissingOperationIDAndRefs(t *testing.T) {
 	}
 }
 
+func TestBuildOperationInventoryRequestBodyFieldsAreRecursiveAndPromptSafe(t *testing.T) {
+	inventory, err := BuildOperationInventory(context.Background(), InventoryOptions{
+		Documents: []InventoryDocument{{
+			Name:    "nested",
+			Content: []byte(openAPI3NestedRequestFixture()),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Operations) != 1 {
+		t.Fatalf("operations = %#v", inventory.Operations)
+	}
+	body := inventory.Operations[0].RequestBody
+	if body == nil {
+		t.Fatalf("missing request body")
+	}
+	var paths []string
+	for _, field := range body.Fields {
+		paths = append(paths, field.Path)
+	}
+	joined := strings.Join(paths, ",")
+	for _, expected := range []string{"user", "user.email", "user.profile", "user.profile.display_name", "groups[]", "groups[].name"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("missing %q in fields %#v", expected, body.Fields)
+		}
+	}
+	for _, forbidden := range []string{"password", "api_key", "token"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("secret-like field %q leaked in %#v", forbidden, body.Fields)
+		}
+	}
+	if got := strings.Join(body.RequiredFieldPaths, ","); !strings.Contains(got, "user.email") || strings.Contains(got, "user.password") {
+		t.Fatalf("required paths = %#v", body.RequiredFieldPaths)
+	}
+}
+
 func inventoryText(inventory OperationInventory) string {
 	var b strings.Builder
 	for _, op := range inventory.Operations {
@@ -282,6 +319,54 @@ paths:
         - $ref: "#/components/parameters/Tenant"
       requestBody:
         $ref: "#/components/requestBodies/Item"
+      responses:
+        "200":
+          description: ok
+`
+}
+
+func openAPI3NestedRequestFixture() string {
+	return `openapi: 3.0.0
+info:
+  title: Nested API
+  version: 1.0.0
+paths:
+  /users:
+    post:
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, groups]
+              properties:
+                user:
+                  type: object
+                  required: [email, password]
+                  properties:
+                    email:
+                      type: string
+                    password:
+                      type: string
+                    profile:
+                      type: object
+                      properties:
+                        display_name:
+                          type: string
+                        api_key:
+                          type: string
+                groups:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      token:
+                        type: string
       responses:
         "200":
           description: ok
