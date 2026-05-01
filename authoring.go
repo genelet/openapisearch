@@ -71,12 +71,14 @@ type SymbolicBinding struct {
 // ReadinessIssue explains why an artifact or operation needs more review before
 // validation, rendering, or execution.
 type ReadinessIssue struct {
-	Severity    string `json:"severity"`
-	Code        string `json:"code,omitempty"`
-	Message     string `json:"message"`
-	OperationID string `json:"operation_id,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Remediation string `json:"remediation,omitempty"`
+	Severity        string `json:"severity"`
+	Code            string `json:"code,omitempty"`
+	Message         string `json:"message"`
+	OperationID     string `json:"operation_id,omitempty"`
+	Path            string `json:"path,omitempty"`
+	Slot            string `json:"slot,omitempty"`
+	SuggestedAnswer string `json:"suggested_answer,omitempty"`
+	Remediation     string `json:"remediation,omitempty"`
 }
 
 // QuestionPlan lists clarification questions that would reduce ambiguity.
@@ -90,6 +92,15 @@ type Question struct {
 	Prompt    string   `json:"prompt"`
 	Options   []string `json:"options,omitempty"`
 	IssueCode string   `json:"issue_code,omitempty"`
+}
+
+// InteractiveQuestion is one next-question decision in an interactive
+// authoring loop.
+type InteractiveQuestion struct {
+	Prompt          string   `json:"prompt"`
+	SuggestedAnswer string   `json:"suggested_answer,omitempty"`
+	Slots           []string `json:"slots,omitempty"`
+	Grouped         bool     `json:"grouped,omitempty"`
 }
 
 // Artifact is a generated draft file or metadata payload.
