@@ -1,0 +1,205 @@
+# Runtime Integration Guide
+
+`openapisearch` provides shared OpenAPI search, intent authoring, iCoT loop, and
+review helpers. A downstream runtime imports those helpers and supplies the
+product-specific behavior that cannot live upstream.
+
+The dependency direction should stay simple:
+
+```text
+openapisearch
+  shared structs, interfaces, scans, selection, prompt loops, review helpers
+
+runtime package
+  imports openapisearch
+  implements chat, parse, render, validate, review, bind, approve, execute
+```
+
+Upstream tests should use fakes and contract tests. They should not import a
+downstream runtime such as Ramen or OpenUdon.
+
+## What Upstream Owns
+
+Use `openapisearch` for behavior that is neutral across runtimes:
+
+- OpenAPI search, import, validation, local discovery, caching, and operation
+  inventory.
+- Prompt-safe operation summaries and operation selection.
+- Artifact sets, diagnostics, readiness issues, slots, assumptions, symbolic
+  bindings, transcripts, and replay turns.
+- Credential-value scanning and symbolic binding audits.
+- Chat JSON completion with structured-output fallback.
+- Prompt sessions and progressive iCoT loop control.
+- Review-only `LeafAdapter` helpers and artifact writing.
+
+These helpers may identify that a binding is needed, that a draft is incomplete,
+or that an artifact contains a likely credential value. They must not resolve
+secrets, choose production accounts, approve artifacts, or execute workflows.
+
+## What Runtimes Own
+
+A runtime package should keep these responsibilities local:
+
+- Concrete artifact schemas and wire contracts.
+- Product-specific prompt text, profile schemas, and validation policy.
+- Approval gates, review states, trusted-runner handoff, and persistence.
+- Credential lookup, account binding, endpoint selection, and auth.
+- Execution, retries, observability, audit logging, and rollback behavior.
+- Product-specific test fixtures and examples.
+
+Ramen, OpenUdon, and future runtimes can share upstream behavior without
+depending on each other.
+
+## Interfaces To Implement
+
+Most integrations start with small adapters around existing runtime code:
+
+- `ChatClient` and `StructuredChatClient` for LLM calls.
+- `Parser[T]`, `Renderer[T]`, `Validator[T]`, `SlotProvider[T]`, and
+  `Refiner[T]` for typed authoring flows.
+- `LeafRenderer` when the neutral draft must be rendered into runtime-specific
+  artifacts.
+- `InteractiveExtractor[S,D]` for iCoT model assistance.
+
+Example chat adapter:
+
+```go
+type ChatAdapter struct {
+	Client RuntimeLLM
+}
+
+func (adapter ChatAdapter) Complete(ctx context.Context, transcript []openapisearch.TranscriptTurn) (openapisearch.TranscriptTurn, error) {
+	reply, err := adapter.Client.Chat(ctx, runtimeMessages(transcript))
+	if err != nil {
+		return openapisearch.TranscriptTurn{}, err
+	}
+	return openapisearch.TranscriptTurn{Role: "assistant", Content: reply}, nil
+}
+
+func (adapter ChatAdapter) CompleteStructured(ctx context.Context, transcript []openapisearch.TranscriptTurn, schema any, out any) error {
+	rawSchema, err := openapisearch.RawSchema(schema)
+	if err != nil {
+		return err
+	}
+	raw, err := adapter.Client.StructuredChat(ctx, runtimeMessages(transcript), rawSchema)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(raw), out)
+}
+```
+
+Use the adapter with upstream fallback logic:
+
+```go
+var draft RuntimeIntent
+result, err := openapisearch.CompleteJSONWithFallback(
+	ctx,
+	ChatAdapter{Client: llm},
+	transcript,
+	intentSchema,
+	&draft,
+	openapisearch.JSONCompletionOptions{FallbackOnStructuredError: true},
+)
+_, _ = result, err
+```
+
+## Authoring Flow Pattern
+
+For typed draft flows, keep parsing and rendering runtime-owned while using the
+shared flow shell:
+
+```go
+flow := openapisearch.Flow[RuntimeIntent]{
+	Parser:       runtimeParser{},
+	Renderer:     runtimeRenderer{},
+	Validator:    runtimeValidator{},
+	SlotProvider: runtimeSlotProvider{},
+	Refiner:      runtimeRefiner{},
+}
+
+draft, artifacts, diagnostics, err := flow.ParseValidateRender(ctx, artifact)
+_, _, _, _ = draft, artifacts, diagnostics, err
+```
+
+For neutral OpenAPI-backed drafting, use the authoring core and then hand the
+leaf to runtime-specific rendering:
+
+```go
+core := openapisearch.NewAuthoringCore()
+leaf, rendered, diagnostics, err := openapisearch.DraftAndRender(ctx, core, runtimeRenderer{}, input)
+_, _, _, _ = leaf, rendered, diagnostics, err
+```
+
+The runtime renderer may use `leaf.MinimumReviewPackage()`, `leaf.BindingAudit()`,
+`leaf.CredentialValueDiagnostics()`, and `leaf.ReviewMarkdown()` as shared
+review evidence, then append product-specific review state.
+
+## ICOT Pattern
+
+`RunProgressiveICOT` owns the loop mechanics: prompt recording, model draft
+events, readiness checks, question selection, cancellation, final confirmation,
+autosave, and transcript persistence.
+
+The runtime supplies hooks for its session type:
+
+```go
+artifacts, err := openapisearch.RunProgressiveICOT(ctx, in, out, openapisearch.ProgressiveLoopHooks[Session, APIDoc, Artifacts]{
+	Session:                seed,
+	Documents:              docs,
+	Extractor:              runtimeExtractor{},
+	Normalize:              normalizeSession,
+	DeterministicPrefill:   deterministicPrefill,
+	LooksLikeSession:       looksLikeSession,
+	MergeDraft:             mergeDraft,
+	CheckReadiness:         checkReadiness,
+	Ready:                  ready,
+	PlanQuestion:           planQuestion,
+	ApplyAnswer:            applyAnswer,
+	FinalConfirm:           finalConfirm,
+	SaveTranscript:         saveTranscript,
+})
+_, _ = artifacts, err
+```
+
+Do not put runtime prompts, approval states, execution policy, or session schema
+into `openapisearch`. Keep those in the runtime and pass behavior through hooks.
+
+## Testing Strategy
+
+Test in two layers:
+
+- Upstream: use fake clients, fake extractors, and small typed fixtures to prove
+  shared logic and interface contracts.
+- Downstream: run the same upstream helpers through real runtime adapters and
+  assert product-specific policy still holds.
+
+Good upstream tests cover:
+
+- structured JSON success, fallback, malformed output, and unchanged targets on
+  error
+- operation selection, plural/camel-case matching, and ambiguous candidates
+- credential-value scans and symbolic binding allowlists
+- artifact path safety and review package summaries
+- progressive iCoT loop cancellation, noop extractor behavior, readiness, and
+  final confirmation
+
+Good downstream tests cover:
+
+- runtime adapter conformance
+- product-specific validation and review evidence
+- approval/trusted-runner paths
+- no secret values in prompts, artifacts, transcripts, or review summaries
+
+## Rename Note
+
+The name `openapisearch` still describes the original CLI and search library,
+but the module now also contains shared UWS authoring and iCoT infrastructure.
+If the module is renamed to something broader, such as `uwstools`, do it as a
+coordinated migration:
+
+- choose the new module path
+- update downstream imports in one branch
+- keep a compatibility window or tag for the old import path if external users
+  exist
+- avoid changing package behavior in the same commit as the rename

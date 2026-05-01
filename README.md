@@ -1,83 +1,67 @@
 # openapisearch
 
-`openapisearch` is a Go library and CLI for finding, validating, caching, and
-importing OpenAPI documents from public catalogs. It also provides a public
-OpenAPI-backed core for AI-assisted authoring: callers can combine
-natural-language briefs with prompt-safe operation context to draft UWS-aligned
-`project.md` and `intent.hcl` artifacts.
+`openapisearch` is two related things:
 
-It searches APIs.guru first and can fall back to public-apis by probing common
-OpenAPI and Swagger paths from catalog landing pages. Imported documents are
-treated as untrusted data: the library only downloads, validates, and writes
-OpenAPI/Swagger documents. It does not execute workflows or call discovered APIs.
+1. A CLI and Go library for finding, validating, caching, importing, and
+   indexing OpenAPI documents.
+2. An upstream intent and iCoT authoring library for tools that draft
+   OpenAPI-backed artifacts while providing their own runtime, review, approval,
+   and execution behavior.
 
-The shared authoring flow is:
+The current module name is historical. The package now contains broader UWS and
+authoring utilities, so a future rename such as `uwstools` may make sense. Until
+that rename is coordinated across downstream modules, the import path remains:
 
-```text
-brief + OpenAPI docs -> prompt-safe operation context -> project.md / intent.hcl draft -> caller-specific leaf renderer
+```go
+github.com/genelet/openapisearch
 ```
 
-The generated artifacts are drafts. Downstream tools such as Ramen and OpenUdon
-must validate, review, and render them through their own domain-specific leaf
-logic. `openapisearch` does not execute APIs, inject credentials, bind concrete
-runtimes, or perform production side effects.
+## CLI
 
-## Install
+Install:
 
 ```bash
 go install github.com/genelet/openapisearch/cmd/openapisearch@latest
 ```
 
-From a local checkout:
+Run from a checkout:
 
 ```bash
 go run ./cmd/openapisearch --help
 ```
 
-## CLI
+Common commands:
 
 ```bash
 go run ./cmd/openapisearch search --query slack
 go run ./cmd/openapisearch search --query slack --json
 go run ./cmd/openapisearch search --query slack --cache ~/.cache/openapisearch/cache.sqlite
-go run ./cmd/openapisearch search --query slack --cache ~/.cache/openapisearch/cache.sqlite --offline
 go run ./cmd/openapisearch import --url https://example.com/openapi.yaml --dir ./openapi --name example
-go run ./cmd/openapisearch import --url https://example.com/openapi.yaml --dir ./openapi --cache ~/.cache/openapisearch/cache.sqlite --offline
 ```
 
-Search sources:
+Search uses APIs.guru first and can fall back to public-apis by probing common
+OpenAPI and Swagger paths. Imported documents are treated as untrusted data:
+this package downloads, validates, indexes, and writes OpenAPI documents. It
+does not execute APIs or workflows.
 
-- `auto`: search APIs.guru first, then public-apis fallback.
-- `apis-guru`: search the APIs.guru OpenAPI directory only.
-- `public-apis`: filter public-apis entries and probe common OpenAPI paths.
-
-## Library
+## Search Library
 
 ```go
-package main
+ctx := context.Background()
+client := &openapisearch.Client{}
 
-import (
-	"context"
-
-	"github.com/genelet/openapisearch"
-)
-
-func main() {
-	ctx := context.Background()
-	client := &openapisearch.Client{}
-	report, err := client.Search(ctx, openapisearch.SearchOptions{
-		Query:  "slack",
-		Source: openapisearch.SourceAuto,
-		Limit:  10,
-	})
-	_, _ = report, err
-}
+report, err := client.Search(ctx, openapisearch.SearchOptions{
+	Query:  "slack",
+	Source: openapisearch.SourceAuto,
+	Limit:  10,
+})
+_, _ = report, err
 ```
 
-Local project directories can be scanned without network access:
+Local project directories can be searched without network access:
 
 ```go
-results, err := openapisearch.LocalFiles(context.Background(), openapisearch.LocalOptions{
+results, err := openapisearch.LocalFiles(ctx, openapisearch.LocalOptions{
 	Dir:     "./openapi",
 	BaseDir: ".",
 	Query:   "slack messages",
@@ -85,36 +69,35 @@ results, err := openapisearch.LocalFiles(context.Background(), openapisearch.Loc
 _, _ = results, err
 ```
 
-`LocalFiles` accepts draft local OpenAPI/Swagger documents with top-level
-metadata so authoring tools can find work-in-progress specs. Remote search and
-import continue to use stricter validation before returning or writing specs.
+Caching is optional through `github.com/genelet/openapisearch/sqlitecache` or
+the CLI `--cache` flag. Cache modes include `read-write`, `refresh`, `offline`,
+and `bypass`.
 
-## Authoring Core
+## Intent And ICOT Library
 
-The authoring core is intended for callers that need OpenAPI-backed assistance
-without coupling to a particular runtime or product workflow. It can own common
-concepts such as operation inventories, ranked prompt-safe summaries,
-transcripts, diagnostics, slots, assumptions, symbolic bindings, readiness
-issues, question plans, and artifact sets.
+The authoring side provides shared structs and control flow for downstream tools
+that want common OpenAPI/UWS drafting behavior but must own their own runtime.
+It includes:
 
-Ramen and OpenUdon embed these shared concepts directly and provide their own
-leaf renderers:
+- operation inventories, summaries, and deterministic operation selection
+- prompt-safe OpenAPI context
+- artifact sets, diagnostics, readiness issues, slots, assumptions, and
+  symbolic bindings
+- credential-value scans and binding audits
+- chat JSON fallback helpers
+- prompt sessions, transcripts, replay helpers, and progressive iCoT loop
+  control
+- review-only leaf adapters and artifact writing helpers
 
-- Ramen owns Ramen-specific `project.md`, workflow `intent.hcl`,
-  `workflow.hcl`, UWS generation, Symphony review packages, trusted runner
-  wrappers, evals, and private udon integration.
-- OpenUdon owns concrete IaC intent models, Terraform generation,
-  graph/profile/planning, state/drift/handoff bundles, and w8m-facing public
-  IaC artifacts.
-
-Ramen and OpenUdon depend on `openapisearch`; they do not depend on each other.
-See [docs/authoring.md](docs/authoring.md) for the shared concepts and binding
-model.
+Downstream packages implement runtime-specific interfaces such as chat clients,
+parsers, renderers, validators, refiners, interactive extractors, approval
+gates, binders, and executors.
 
 ```go
 core := openapisearch.NewAuthoringCore()
+
 opctx, artifacts, err := openapisearch.DraftFromOpenAPI(
-	context.Background(),
+	ctx,
 	core,
 	openapisearch.Brief{
 		Text:        "Create one support ticket from runtime inputs.",
@@ -129,61 +112,21 @@ leaf := openapisearch.NewLeafAdapter(artifacts, openapisearch.LeafOptions{
 	Name:   "Support Ticket Draft",
 	Source: "example",
 })
-reviewMarkdown := leaf.ReviewMarkdown()
-_ = reviewMarkdown
+review := leaf.ReviewMarkdown()
+_ = review
 ```
 
-## SQLite Cache
+For runtime implementers, see
+[docs/runtime-integration.md](docs/runtime-integration.md). For the authoring
+model and binding terminology, see [docs/authoring.md](docs/authoring.md).
 
-Caching is opt-in. Pass a SQLite cache to the client, or use `--cache` in the
-CLI. The default cache mode is `read-write` when a cache is configured.
+## Safety Boundary
 
-```go
-package main
-
-import (
-	"context"
-	"time"
-
-	"github.com/genelet/openapisearch"
-	"github.com/genelet/openapisearch/sqlitecache"
-)
-
-func main() error {
-	ctx := context.Background()
-	cache, err := sqlitecache.Open("cache.sqlite")
-	if err != nil {
-		return err
-	}
-	defer cache.Close()
-
-	client := &openapisearch.Client{Cache: cache}
-	_, err = client.Search(ctx, openapisearch.SearchOptions{
-		Query:       "slack",
-		Source:      openapisearch.SourceAuto,
-		Limit:       10,
-		CacheMode:   openapisearch.CacheModeReadWrite,
-		CacheMaxAge: 24 * time.Hour,
-	})
-	return err
-}
-```
-
-Cache modes:
-
-- `read-write`: use fresh cached data first, then refresh from the network on miss.
-- `refresh`: bypass cache reads and write successful network results.
-- `offline`: use only cached search results or OpenAPI documents.
-- `bypass`: ignore the cache.
-
-The default client enforces:
-
-- HTTP/HTTPS only
-- localhost, private, link-local, multicast, and unspecified address rejection
-- redirect checks
-- bounded response size
-- request timeout
-- OpenAPI/Swagger content validation before import
+`openapisearch` is upstream shared infrastructure. It must not resolve concrete
+credentials, select production accounts, bypass caller review, or execute
+side-effectful workflows. Runtime packages such as Ramen and OpenUdon inherit the
+shared structs and helpers, then supply product-specific validation, review,
+approval, persistence, binding, and execution.
 
 ## Development
 
