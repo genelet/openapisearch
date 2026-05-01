@@ -268,11 +268,11 @@ func addDocumentInventory(inventory *OperationInventory, doc InventoryDocument, 
 	pathKeys := sortedMapKeys(paths)
 	for _, path := range pathKeys {
 		pathItem := mapValue(paths[path])
-		pathParameters := parameterSummaries(sliceValue(pathItem["parameters"]), nil)
+		pathParameterValues := sliceValue(pathItem["parameters"])
 		for _, method := range operationMethods(pathItem) {
 			operation := mapValue(pathItem[method])
 			op := operationSummary(doc, name, path, method, operation)
-			op.Parameters = append(op.Parameters, pathParameters...)
+			op.Parameters = append(op.Parameters, parameterSummaries(pathParameterValues, &op)...)
 			op.Parameters = append(op.Parameters, parameterSummaries(sliceValue(operation["parameters"]), &op)...)
 			op.RequestBody = requestBodySummary(operation, &op)
 			if value, ok := operation["security"]; ok {

@@ -121,6 +121,12 @@ func TestBuildOperationInventoryReportsMissingOperationIDAndRefs(t *testing.T) {
 	if len(inventory.ReadinessIssues) == 0 {
 		t.Fatalf("inventory readiness issues missing")
 	}
+	if !hasReadinessIssue(got.ReadinessIssues, "schema.ref_unresolved", "#/components/parameters/PathTenant") {
+		t.Fatalf("operation did not report path-level parameter ref: %#v", got.ReadinessIssues)
+	}
+	if !hasReadinessIssue(inventory.ReadinessIssues, "schema.ref_unresolved", "#/components/parameters/PathTenant") {
+		t.Fatalf("inventory did not report path-level parameter ref: %#v", inventory.ReadinessIssues)
+	}
 }
 
 func TestBuildOperationInventoryRequestBodyFieldsAreRecursiveAndPromptSafe(t *testing.T) {
@@ -179,6 +185,15 @@ func inventoryText(inventory OperationInventory) string {
 		}
 	}
 	return b.String()
+}
+
+func hasReadinessIssue(issues []ReadinessIssue, code, path string) bool {
+	for _, issue := range issues {
+		if issue.Code == code && issue.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func openAPI3InventoryFixture() string {
@@ -314,6 +329,8 @@ info:
   version: 1.0.0
 paths:
   /items:
+    parameters:
+      - $ref: "#/components/parameters/PathTenant"
     post:
       parameters:
         - $ref: "#/components/parameters/Tenant"

@@ -2,6 +2,7 @@ package openapisearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,7 +26,7 @@ type TranscriptTurn struct {
 // Diagnostic describes an authoring or validation issue.
 type Diagnostic struct {
 	Severity    string `json:"severity"`
-	Code        string `json:"code,omitempty"`
+	Code        string `json:"code"`
 	Message     string `json:"message"`
 	Path        string `json:"path,omitempty"`
 	Remediation string `json:"remediation,omitempty"`
@@ -94,8 +95,8 @@ type Question struct {
 // Artifact is a generated draft file or metadata payload.
 type Artifact struct {
 	Path      string `json:"path"`
-	MediaType string `json:"media_type,omitempty"`
-	Content   []byte `json:"content"`
+	MediaType string `json:"media_type"`
+	Content   []byte `json:"content,omitempty"`
 }
 
 // ArtifactSet groups draft artifacts with the review metadata used to produce
@@ -110,6 +111,35 @@ type ArtifactSet struct {
 	Slots            []Slot              `json:"slots,omitempty"`
 	Assumptions      []Assumption        `json:"assumptions,omitempty"`
 	QuestionPlan     QuestionPlan        `json:"question_plan,omitempty"`
+}
+
+func (set ArtifactSet) MarshalJSON() ([]byte, error) {
+	type artifactSetJSON struct {
+		Artifacts        []Artifact          `json:"artifacts,omitempty"`
+		Diagnostics      []Diagnostic        `json:"diagnostics,omitempty"`
+		Transcript       *Transcript         `json:"transcript,omitempty"`
+		Inventory        *OperationInventory `json:"inventory,omitempty"`
+		SymbolicBindings []SymbolicBinding   `json:"symbolic_bindings,omitempty"`
+		ReadinessIssues  []ReadinessIssue    `json:"readiness_issues,omitempty"`
+		Slots            []Slot              `json:"slots,omitempty"`
+		Assumptions      []Assumption        `json:"assumptions,omitempty"`
+		QuestionPlan     *QuestionPlan       `json:"question_plan,omitempty"`
+	}
+	out := artifactSetJSON{
+		Artifacts:        set.Artifacts,
+		Diagnostics:      set.Diagnostics,
+		Transcript:       set.Transcript,
+		Inventory:        set.Inventory,
+		SymbolicBindings: set.SymbolicBindings,
+		ReadinessIssues:  set.ReadinessIssues,
+		Slots:            set.Slots,
+		Assumptions:      set.Assumptions,
+	}
+	if len(set.QuestionPlan.Questions) > 0 {
+		questionPlan := set.QuestionPlan
+		out.QuestionPlan = &questionPlan
+	}
+	return json.Marshal(out)
 }
 
 // Parser decodes an artifact into a typed draft.

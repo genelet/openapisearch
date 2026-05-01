@@ -115,6 +115,6 @@ validation, review, concrete leaf rendering, runtime binding, and execution.
 
 Prompt-safe OpenAPI metadata should include only the information needed for
 selection and drafting: operation names, descriptions, methods, paths, schemas,
-required fields, security scheme labels, examples, and source provenance.
-Secrets, tokens, credential values, production identifiers, and workflow
-execution data must not be cached or included in prompts.
+required fields, security scheme labels, and source provenance. Examples,
+defaults, secrets, tokens, credential values, production identifiers, and
+workflow execution data must not be cached or included in prompts.

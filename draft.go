@@ -122,7 +122,27 @@ func draftSlots(operations []OperationSummary) []Slot {
 				Source:      op.ID,
 			}
 		}
-		if op.RequestBody == nil || op.RequestBody.Schema == nil {
+		if op.RequestBody == nil {
+			continue
+		}
+		if len(op.RequestBody.Fields) > 0 {
+			for _, field := range requiredDraftRequestFields(op.RequestBody.Fields) {
+				name := sanitizeDraftName(field.Path)
+				if name == "" {
+					continue
+				}
+				seen[name] = Slot{
+					Name:        name,
+					Type:        firstNonEmpty(field.Type, "string"),
+					Description: firstNonEmpty(field.Description, fmt.Sprintf("Required request body field for %s.", draftOperationLabel(op))),
+					Required:    true,
+					Sensitive:   looksCredentialLike(field.Path),
+					Source:      op.ID,
+				}
+			}
+			continue
+		}
+		if op.RequestBody.Schema == nil {
 			continue
 		}
 		for _, property := range op.RequestBody.Schema.Properties {
@@ -144,6 +164,29 @@ func draftSlots(operations []OperationSummary) []Slot {
 		}
 	}
 	return sortedSlots(seen)
+}
+
+func requiredDraftRequestFields(fields []RequestFieldSummary) []RequestFieldSummary {
+	out := make([]RequestFieldSummary, 0, len(fields))
+	for _, field := range fields {
+		if !field.Required || field.Path == "" || hasRequiredChildRequestField(field.Path, fields) {
+			continue
+		}
+		out = append(out, field)
+	}
+	return out
+}
+
+func hasRequiredChildRequestField(path string, fields []RequestFieldSummary) bool {
+	for _, field := range fields {
+		if !field.Required || field.Path == path {
+			continue
+		}
+		if strings.HasPrefix(field.Path, path+".") || strings.HasPrefix(field.Path, path+"[]") {
+			return true
+		}
+	}
+	return false
 }
 
 func draftSymbolicBindings(operations []OperationSummary) []SymbolicBinding {

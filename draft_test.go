@@ -85,6 +85,50 @@ func TestDraftArtifactsReportsUnknownSelection(t *testing.T) {
 	}
 }
 
+func TestDraftArtifactsUsesRecursiveRequestFields(t *testing.T) {
+	inventory, err := BuildOperationInventory(context.Background(), InventoryOptions{
+		Documents: []InventoryDocument{{
+			Name:    "nested",
+			Content: []byte(openAPI3NestedRequestFixture()),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := DraftArtifacts(context.Background(), DraftOptions{
+		ProjectName:          "Nested Draft",
+		Inventory:            inventory,
+		SelectedOperationIDs: []string{"createUser"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := artifactContent(t, set, "project.md")
+	intent := artifactContent(t, set, "intent.hcl")
+	for _, want := range []string{"`user_email`", "`groups_name`", `input "user_email"`, `input "groups_name"`} {
+		if !strings.Contains(project+intent, want) {
+			t.Fatalf("draft missing nested input %q\nproject:\n%s\nintent:\n%s", want, project, intent)
+		}
+	}
+	for _, forbidden := range []string{"password", "api_key", "token"} {
+		if strings.Contains(project+intent, forbidden) {
+			t.Fatalf("draft leaked secret-like field %q\nproject:\n%s\nintent:\n%s", forbidden, project, intent)
+		}
+	}
+	if !hasSlot(set.Slots, "user_email") || !hasSlot(set.Slots, "groups_name") {
+		t.Fatalf("slots = %#v", set.Slots)
+	}
+}
+
+func hasSlot(slots []Slot, name string) bool {
+	for _, slot := range slots {
+		if slot.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func artifactContent(t *testing.T, set ArtifactSet, path string) string {
 	t.Helper()
 	for _, artifact := range set.Artifacts {
