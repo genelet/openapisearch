@@ -111,6 +111,28 @@ Ramen and OpenUdon depend on `openapisearch`; they do not depend on each other.
 See [docs/authoring.md](docs/authoring.md) for the shared concepts and binding
 model.
 
+```go
+core := openapisearch.NewAuthoringCore()
+opctx, artifacts, err := openapisearch.DraftFromOpenAPI(
+	context.Background(),
+	core,
+	openapisearch.Brief{
+		Text:        "Create one support ticket from runtime inputs.",
+		ProjectName: "Support Ticket Draft",
+	},
+	[]openapisearch.OpenAPIDoc{{Path: "openapi/support.yaml"}},
+	[]string{"createTicket"},
+)
+_, _, _ = opctx, artifacts, err
+
+leaf := openapisearch.NewLeafAdapter(artifacts, openapisearch.LeafOptions{
+	Name:   "Support Ticket Draft",
+	Source: "example",
+})
+reviewMarkdown := leaf.ReviewMarkdown()
+_ = reviewMarkdown
+```
+
 ## SQLite Cache
 
 Caching is opt-in. Pass a SQLite cache to the client, or use `--cache` in the

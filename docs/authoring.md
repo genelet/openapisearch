@@ -78,24 +78,30 @@ type AuthoringCore interface {
 	Draft(ctx context.Context, input DraftInput) (ArtifactSet, error)
 }
 
-type LeafAdapter interface {
-	RenderProject(ctx context.Context, artifacts ArtifactSet) error
-	RenderIntent(ctx context.Context, artifacts ArtifactSet) error
+type LeafAdapter struct {
+	Name                    string
+	Source                  string
+	ArtifactSet             ArtifactSet
+	ReviewPackage           ReviewPackage
+	DeferredExecutionPolicy DeferredExecutionPolicy
+}
+
+type LeafRenderer interface {
+	RenderLeaf(ctx context.Context, leaf LeafAdapter) (ArtifactSet, []Diagnostic, error)
 }
 
 type RuntimeBinder interface {
 	Bind(ctx context.Context, names []SymbolicBinding) (BoundRuntime, error)
 }
 
-func DraftAndRender(ctx context.Context, core AuthoringCore, leaf LeafAdapter, input DraftInput) error {
+func DraftAndRender(ctx context.Context, core AuthoringCore, renderer LeafRenderer, input DraftInput) (LeafAdapter, ArtifactSet, []Diagnostic, error) {
 	artifacts, err := core.Draft(ctx, input)
 	if err != nil {
-		return err
+		return LeafAdapter{}, ArtifactSet{}, nil, err
 	}
-	if err := leaf.RenderProject(ctx, artifacts); err != nil {
-		return err
-	}
-	return leaf.RenderIntent(ctx, artifacts)
+	leaf := NewLeafAdapter(artifacts, LeafOptions{Name: input.Brief.ProjectName})
+	rendered, diagnostics, err := renderer.RenderLeaf(ctx, leaf)
+	return leaf, rendered, diagnostics, err
 }
 
 func ExecuteReviewed(ctx context.Context, binder RuntimeBinder, leaf ExecutableLeaf, artifacts ArtifactSet) error {
@@ -110,6 +116,21 @@ func ExecuteReviewed(ctx context.Context, binder RuntimeBinder, leaf ExecutableL
 In this model, `openapisearch` participates in `DraftAndRender` by supplying
 prompt-safe context and domain-neutral draft structures. The caller owns
 validation, review, concrete leaf rendering, runtime binding, and execution.
+
+The package exposes this model as a neutral authoring facade:
+
+- `AuthoringCore` builds prompt-safe `OperationContext` values and drafts
+  neutral artifact sets.
+- `NeutralAuthoringCore` is the default implementation over
+  `BuildOperationInventory` and `DraftArtifacts`.
+- `DraftFromOpenAPI` runs the full neutral pipeline for callers that already
+  have OpenAPI documents.
+- `LeafAdapter` is a concrete embeddable review-only object with shared
+  artifact, readiness, binding-audit, and review helpers.
+- `DraftAndRender` hands the neutral leaf to a caller-owned `LeafRenderer`
+  without performing credential binding or execution.
+- `ArtifactOutputPath` and `WriteArtifactSet` provide filesystem-safe artifact
+  writing for callers that need to persist rendered artifact sets.
 
 ## Prompt Safety
 

@@ -45,6 +45,12 @@ Rule of thumb:
 
 Ramen and OpenUdon depend on or embed `openapisearch` concepts directly. Ramen
 does not inherit from OpenUdon, and OpenUdon does not inherit from Ramen.
+Downstreams may inherit common behavior at runtime by embedding concrete
+`openapisearch` review/deferred-leaf helpers or composing shared functions, but
+that inheritance must stay domain-neutral: the shared object can carry
+artifacts, symbolic binding names, diagnostics, readiness issues, review
+scaffolding, and safe filesystem behavior, while the downstream leaf keeps its
+own rendering, validation, approval, bundling, and execution policy.
 
 ## Architecture
 
@@ -68,6 +74,14 @@ artifacts.
 must satisfy, but it does not resolve credentials, choose concrete accounts, or
 execute operations. Specialized engines bind runtime implementations and leaf
 adapters only when they validate and execute their own artifacts.
+
+This is an inheritance/composition rule as much as a safety rule. Shared
+authoring objects should be embeddable so Ramen, OpenUdon, and other callers can
+reuse common artifact, review, readiness, binding-audit, and safe-write logic at
+runtime without inheriting each other's product semantics. Runtime inheritance
+must flow from `openapisearch` into caller-owned leaves; it must not create a
+dependency from `openapisearch` back into Ramen, OpenUdon, udon, w8m, private
+credential resolvers, or trusted runners.
 
 ## Commands
 

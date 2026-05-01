@@ -15,6 +15,7 @@ type DraftOptions struct {
 	ProjectName          string             `json:"project_name,omitempty"`
 	Inventory            OperationInventory `json:"inventory,omitempty"`
 	SelectedOperationIDs []string           `json:"selected_operation_ids,omitempty"`
+	Transcript           *Transcript        `json:"transcript,omitempty"`
 }
 
 // DraftArtifacts renders neutral, review-only project.md and intent.hcl draft
@@ -60,6 +61,8 @@ func DraftArtifacts(ctx context.Context, opts DraftOptions) (ArtifactSet, error)
 		{Path: "project.md", MediaType: "text/markdown", Content: []byte(project)},
 		{Path: "intent.hcl", MediaType: "text/plain", Content: []byte(intent)},
 	}
+	transcript := draftTranscript(opts.Transcript, operations, slots, bindings, issues, set.Artifacts)
+	set.Transcript = &transcript
 	return set, nil
 }
 
@@ -214,6 +217,40 @@ func draftSymbolicBindings(operations []OperationSummary) []SymbolicBinding {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func draftTranscript(base *Transcript, operations []OperationSummary, slots []Slot, bindings []SymbolicBinding, issues []ReadinessIssue, artifacts []Artifact) Transcript {
+	var transcript Transcript
+	if base != nil {
+		transcript.Turns = append(transcript.Turns, base.Turns...)
+	}
+	var operationLabels []string
+	for _, op := range operations {
+		operationLabels = append(operationLabels, draftOperationLabel(op))
+	}
+	if len(operationLabels) == 0 {
+		operationLabels = append(operationLabels, "none")
+	}
+	transcript.Turns = append(transcript.Turns, TranscriptTurn{
+		Role:    "tool",
+		Content: "Selected OpenAPI operations for neutral draft: " + strings.Join(operationLabels, ", ") + ".",
+		Source:  "openapi.draft.selection",
+	})
+	transcript.Turns = append(transcript.Turns, TranscriptTurn{
+		Role:    "tool",
+		Content: fmt.Sprintf("Inferred %d required slot(s), %d symbolic binding(s), and %d readiness issue(s).", len(slots), len(bindings), len(issues)),
+		Source:  "openapi.draft.metadata",
+	})
+	var artifactPaths []string
+	for _, artifact := range artifacts {
+		artifactPaths = append(artifactPaths, artifact.Path)
+	}
+	transcript.Turns = append(transcript.Turns, TranscriptTurn{
+		Role:    "tool",
+		Content: "Rendered neutral draft artifact(s): " + strings.Join(artifactPaths, ", ") + ".",
+		Source:  "openapi.draft.render",
+	})
+	return transcript
 }
 
 func inventoryOperationIssues(operations []OperationSummary) []ReadinessIssue {
