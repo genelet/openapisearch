@@ -2,28 +2,72 @@
 
 ## Purpose
 
-`openapisearch` is an open-source Go library and CLI for discovering, validating,
-caching, and importing OpenAPI or Swagger documents from public catalogs.
+`openapisearch` is an open-source Go library and CLI for discovering,
+validating, caching, and importing OpenAPI or Swagger documents from public
+catalogs. It also provides the public OpenAPI-backed authoring substrate for
+AI-assisted workflows that turn natural-language briefs and prompt-safe
+operation context into draft `project.md` and `intent.hcl` artifacts.
 
 The package is intentionally generic. It is shared by private consumers such as
-Ramen and udon, but it must not contain Ramen workflow semantics, udon runtime
-behavior, product-specific policy, or private infrastructure assumptions.
+Ramen and public consumers such as OpenUdon, but it must not contain Ramen
+workflow semantics, OpenUdon IaC semantics, udon runtime behavior,
+product-specific policy, or private infrastructure assumptions.
 
 ## Boundaries
 
 - Keep provider discovery, URL safety, OpenAPI/Swagger validation, local cache,
-  and CLI behavior in this repository.
-- Put workflow authoring, synthesis policy, trusted-runner gates, and example
-  artifacts in Ramen.
-- Put UWS/OpenAPI execution, lowering, and runtime behavior in udon.
+  operation inventories, ranking, prompt-safe summaries, and CLI behavior in
+  this repository.
+- Keep generic AI-assisted authoring primitives here when they are
+  domain-neutral: common fields, methods, interfaces, transcripts, diagnostics,
+  slots, assumptions, symbolic bindings, readiness issues, question plans, and
+  draft artifact flow for `project.md` and `intent.hcl`.
+- Put Ramen-specific `project.md`, workflow `intent.hcl`, `workflow.hcl`, UWS
+  generation, Symphony review packages, trusted-runner gates, evals, example
+  artifacts, and private udon integration in Ramen.
+- Put concrete OpenUdon IaC intent models, Terraform generation, graph/profile
+  planning, state/drift/handoff bundles, and w8m-facing public IaC artifacts in
+  OpenUdon.
+- Put UWS/OpenAPI execution, lowering, concrete execution, credential
+  resolution, runtime binding, and trusted runner behavior in udon or the
+  calling runtime.
 - Put public UWS semantics in `../uws`.
-- Do not add LLM-generated spec synthesis here without a deliberate design pass.
+- Do not add product-specific LLM synthesis, API execution, credential
+  injection, or production side effects here.
 
 Rule of thumb:
 
 - If it helps find or safely import OpenAPI documents, it belongs here.
+- If it helps author prompt-safe, OpenAPI-backed draft artifacts without
+  product-specific semantics, it belongs here.
 - If it executes an API or workflow, it does not belong here.
 - If it depends on a private repo or product workflow, it does not belong here.
+
+Ramen and OpenUdon depend on or embed `openapisearch` concepts directly. Ramen
+does not inherit from OpenUdon, and OpenUdon does not inherit from Ramen.
+
+## Architecture
+
+OpenAPI owns methods, paths, schemas, servers, and security declarations.
+`openapisearch` owns discovery, validation, import, inventories, prompt-safe
+metadata, and domain-neutral authoring loops over that OpenAPI context.
+
+Authoring follows this shared flow:
+
+```text
+brief + OpenAPI docs -> prompt-safe operation context -> project.md / intent.hcl draft -> caller-specific leaf renderer
+```
+
+Generated `project.md` and `intent.hcl` outputs are drafts. Callers are
+responsible for validating, reviewing, and rendering them into their own leaf
+artifacts.
+
+### Binding happens at execution time
+
+`openapisearch` may name symbolic bindings and describe the contract a caller
+must satisfy, but it does not resolve credentials, choose concrete accounts, or
+execute operations. Specialized engines bind runtime implementations and leaf
+adapters only when they validate and execute their own artifacts.
 
 ## Commands
 

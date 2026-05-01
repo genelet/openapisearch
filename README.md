@@ -1,12 +1,26 @@
 # openapisearch
 
-`openapisearch` is a small Go library and CLI for finding, validating, caching,
-and importing OpenAPI documents from public catalogs.
+`openapisearch` is a Go library and CLI for finding, validating, caching, and
+importing OpenAPI documents from public catalogs. It also provides a public
+OpenAPI-backed core for AI-assisted authoring: callers can combine
+natural-language briefs with prompt-safe operation context to draft UWS-aligned
+`project.md` and `intent.hcl` artifacts.
 
 It searches APIs.guru first and can fall back to public-apis by probing common
 OpenAPI and Swagger paths from catalog landing pages. Imported documents are
 treated as untrusted data: the library only downloads, validates, and writes
 OpenAPI/Swagger documents. It does not execute workflows or call discovered APIs.
+
+The shared authoring flow is:
+
+```text
+brief + OpenAPI docs -> prompt-safe operation context -> project.md / intent.hcl draft -> caller-specific leaf renderer
+```
+
+The generated artifacts are drafts. Downstream tools such as Ramen and OpenUdon
+must validate, review, and render them through their own domain-specific leaf
+logic. `openapisearch` does not execute APIs, inject credentials, bind concrete
+runtimes, or perform production side effects.
 
 ## Install
 
@@ -59,6 +73,43 @@ func main() {
 	_, _ = report, err
 }
 ```
+
+Local project directories can be scanned without network access:
+
+```go
+results, err := openapisearch.LocalFiles(context.Background(), openapisearch.LocalOptions{
+	Dir:     "./openapi",
+	BaseDir: ".",
+	Query:   "slack messages",
+})
+_, _ = results, err
+```
+
+`LocalFiles` accepts draft local OpenAPI/Swagger documents with top-level
+metadata so authoring tools can find work-in-progress specs. Remote search and
+import continue to use stricter validation before returning or writing specs.
+
+## Authoring Core
+
+The authoring core is intended for callers that need OpenAPI-backed assistance
+without coupling to a particular runtime or product workflow. It can own common
+concepts such as operation inventories, ranked prompt-safe summaries,
+transcripts, diagnostics, slots, assumptions, symbolic bindings, readiness
+issues, question plans, and artifact sets.
+
+Ramen and OpenUdon embed these shared concepts directly and provide their own
+leaf renderers:
+
+- Ramen owns Ramen-specific `project.md`, workflow `intent.hcl`,
+  `workflow.hcl`, UWS generation, Symphony review packages, trusted runner
+  wrappers, evals, and private udon integration.
+- OpenUdon owns concrete IaC intent models, Terraform generation,
+  graph/profile/planning, state/drift/handoff bundles, and w8m-facing public
+  IaC artifacts.
+
+Ramen and OpenUdon depend on `openapisearch`; they do not depend on each other.
+See [docs/authoring.md](docs/authoring.md) for the shared concepts and binding
+model.
 
 ## SQLite Cache
 

@@ -18,6 +18,12 @@ func sortResults(results []Result) {
 	})
 }
 
+// ScoreText returns a deterministic relevance score for query terms in text.
+// Higher scores indicate stronger textual overlap.
+func ScoreText(query, text string) int {
+	return scoreText(query, text)
+}
+
 func scoreText(query, text string) int {
 	query = strings.ToLower(strings.TrimSpace(query))
 	text = strings.ToLower(text)
