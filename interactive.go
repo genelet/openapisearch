@@ -233,6 +233,8 @@ type InteractiveExtractor[S, D any] interface {
 // NoopInteractiveExtractor disables AI assistance.
 type NoopInteractiveExtractor[S, D any] struct{}
 
+func (NoopInteractiveExtractor[S, D]) noopInteractiveExtractor() {}
+
 func (NoopInteractiveExtractor[S, D]) Kickoff(context.Context, string) (S, error) {
 	var zero S
 	return zero, nil
@@ -290,6 +292,7 @@ func RunProgressiveICOT[S, D, A any](ctx context.Context, in io.Reader, out io.W
 	if extractor == nil {
 		extractor = NoopInteractiveExtractor[S, D]{}
 	}
+	_, noopExtractor := extractor.(interface{ noopInteractiveExtractor() })
 	attempts := hooks.MaxAttempts
 	if attempts <= 0 {
 		attempts = 20
@@ -356,8 +359,14 @@ func RunProgressiveICOT[S, D, A any](ctx context.Context, in io.Reader, out io.W
 			"turn_count":       len(request.TranscriptTurns),
 			"readiness_issues": request.ReadinessFeedback,
 		})
-		draft, draftErr := extractor.Draft(ctx, request)
-		if draftErr == nil && (hooks.LooksLikeSession == nil || hooks.LooksLikeSession(draft)) {
+		var (
+			draft    S
+			draftErr error
+		)
+		if !noopExtractor {
+			draft, draftErr = extractor.Draft(ctx, request)
+		}
+		if !noopExtractor && draftErr == nil && (hooks.LooksLikeSession == nil || hooks.LooksLikeSession(draft)) {
 			if hooks.MergeDraft != nil {
 				session = hooks.MergeDraft(session, draft, docs)
 			} else {
@@ -382,7 +391,7 @@ func RunProgressiveICOT[S, D, A any](ctx context.Context, in io.Reader, out io.W
 					return zero, err
 				}
 			}
-		} else if draftErr != nil {
+		} else if !noopExtractor && draftErr != nil {
 			record("model_draft_error", draftErr.Error())
 			if hooks.OnDraftError != nil {
 				hooks.OnDraftError(draftErr)

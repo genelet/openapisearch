@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -31,18 +32,24 @@ func CompleteJSONWithFallback(ctx context.Context, client ChatClient, transcript
 	if client == nil {
 		return JSONCompletionResult{}, fmt.Errorf("chat client is required")
 	}
+	target, err := jsonCompletionTarget(out)
+	if err != nil {
+		return JSONCompletionResult{}, err
+	}
 	if !opts.DisableStructuredCompletion {
 		if structured, ok := client.(StructuredChatClient); ok {
-			err := structured.CompleteStructured(ctx, transcript, schema, out)
+			scratch := reflect.New(target.Elem().Type())
+			err := structured.CompleteStructured(ctx, transcript, schema, scratch.Interface())
 			if err == nil {
+				target.Elem().Set(scratch.Elem())
 				return JSONCompletionResult{Mode: JSONCompletionModeStructured}, nil
 			}
 			if !opts.FallbackOnStructuredError {
 				return JSONCompletionResult{Mode: JSONCompletionModeStructured}, err
 			}
-			transcript = AppendLegacyJSONInstruction(transcript, opts.LegacyInstruction)
 		}
 	}
+	transcript = AppendLegacyJSONInstruction(transcript, opts.LegacyInstruction)
 	reply, err := client.Complete(ctx, transcript)
 	if err != nil {
 		return JSONCompletionResult{Mode: JSONCompletionModeLegacy}, err
@@ -51,10 +58,23 @@ func CompleteJSONWithFallback(ctx context.Context, client ChatClient, transcript
 	if err != nil {
 		return JSONCompletionResult{Mode: JSONCompletionModeLegacy, Raw: reply.Content}, err
 	}
-	if err := json.Unmarshal([]byte(jsonText), out); err != nil {
+	scratch := reflect.New(target.Elem().Type())
+	if err := json.Unmarshal([]byte(jsonText), scratch.Interface()); err != nil {
 		return JSONCompletionResult{Mode: JSONCompletionModeLegacy, Raw: jsonText}, err
 	}
+	target.Elem().Set(scratch.Elem())
 	return JSONCompletionResult{Mode: JSONCompletionModeLegacy, Raw: jsonText}, nil
+}
+
+func jsonCompletionTarget(out any) (reflect.Value, error) {
+	if out == nil {
+		return reflect.Value{}, fmt.Errorf("completion output target is required")
+	}
+	target := reflect.ValueOf(out)
+	if target.Kind() != reflect.Pointer || target.IsNil() {
+		return reflect.Value{}, fmt.Errorf("completion output target must be a non-nil pointer")
+	}
+	return target, nil
 }
 
 // ExtractJSONBlock extracts a JSON object from a raw model response.

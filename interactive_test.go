@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,6 +138,25 @@ func TestRunProgressiveICOT(t *testing.T) {
 	}
 	if artifacts.Session.Goal != "goal" || artifacts.Session.Step != "drafted" || artifacts.Session.Output != "result" {
 		t.Fatalf("artifacts = %#v", artifacts)
+	}
+}
+
+func TestRunProgressiveICOTNoopExtractorDoesNotReplaceSeed(t *testing.T) {
+	hooks := ProgressiveLoopHooks[testSession, string, testArtifacts]{
+		Session: testSession{Goal: "seed goal", Step: "seed step", Output: "seed output"},
+		Opening: "seed goal",
+		NoLLM:   true,
+		Ready:   func(session testSession, _ []ReadinessIssue) bool { return session.Step != "" && session.Output != "" },
+		FinalConfirm: func(_ *PromptSession, session *testSession, _ []string, _ *[]PromptEvent) (testArtifacts, error) {
+			return testArtifacts{Session: *session}, nil
+		},
+	}
+	artifacts, err := RunProgressiveICOT(context.Background(), strings.NewReader(""), io.Discard, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifacts.Session.Goal != "seed goal" || artifacts.Session.Step != "seed step" || artifacts.Session.Output != "seed output" {
+		t.Fatalf("seed was replaced by noop draft: %#v", artifacts.Session)
 	}
 }
 
